@@ -1,5 +1,7 @@
-import pandas as pd
+import datetime
+
 import configparser
+import pandas as pd
 import requests
 from lxml import html
 
@@ -13,6 +15,8 @@ pwd = config.get('HL', 'pwd')
 login_url1 = 'https://online.hl.co.uk/my-accounts/login-step-one'
 login_url2 = 'https://online.hl.co.uk/my-accounts/login-step-two'
 account_summary_url = 'https://online.hl.co.uk/my-accounts/account_summary/account/22'
+
+price_history_url_base = 'http://markets.ft.com/data/funds/tearsheet/historical?s='
 
 
 def get_validation_token(content):
@@ -69,33 +73,74 @@ def create_transaction_history(transaction_data):
 
     return transaction_history
 
-my_session = requests.session()
 
-result = my_session.get(login_url1)
-vt = get_validation_token(result.content)
+def get_fund_price_history(session, name, fund_isin, start_date):
+    row_xpath = ('.//*[@class="mod-ui-table mod-tearsheet-historical-prices__results mod-ui-table--freeze-pane"]'
+                 '/tbody/tr')
+    get_more_rows_xpath = './/*[@class="o-buttons mod-tearsheet-historical-prices__moreButton mod-ui-hide-small-below"]'
+    result = session.get(price_history_url_base + fund_isin)
+    parsed_html = html.fromstring(result.content)
 
-result = my_session.post(login_url1, {'hl_vt': vt, 'username': username, 'DoB': dob, 'submit.x': '50',
-                                      'submit.y': '20', 'submit': 'login'})
+    # Load initial data
+    table_rows = parsed_html.findall(row_xpath)
+    next_date = parsed_html.find(get_more_rows_xpath).attrib['data-mod-results-startdate']
+    symbol = parsed_html.find(get_more_rows_xpath).attrib['data-mod-symbol']
 
-result = my_session.get(login_url2)
-vt = get_validation_token(result.content)
-parsed_html = html.fromstring(result.content)
-required_chars = [int(x.text) - 1 for x in parsed_html.xpath('//*[@id="login-box-border"]/div/p/strong')]
+    price_history = []
+    for row in table_rows:
+        date = row.find('td/span[1]').text
+        date = datetime.datetime.strptime(date, '%A, %B %d, %Y')
+        price = float(row.findall('td')[1].text)
 
-result = my_session.post(login_url2, {'hl_vt': vt, 'pChar1': pwd[required_chars[0]], 'pChar2': pwd[required_chars[1]],
-                                      'pChar3': pwd[required_chars[2]], 'submit.x': '50', 'submit.y': '20',
-                                      'submit': 'login'})
-result = my_session.get(account_summary_url)
+        price_history.append((date, name, price))
 
-holdings_data = get_list_of_holdings(result.content)
-all_transactions = []
-fund_isins = []
-for name, url, isin_url in zip(holdings_data[0], holdings_data[1], holdings_data[2]):
-    history = get_transaction_history_for_url(my_session, name, url)
-    all_transactions.extend(history)
+    while price_history[-1][0] > start_date:
+        extra_results = my_session.get('http://markets.ft.com/data/equities/ajax/getmorehistoricalprices',
+                                       params={'resultsStartDate': next_date, 'symbol': symbol,
+                                               'isLastRowStriped': 'false'})
 
-    fund_isins.append((name, extract_isin_from_url(my_session, isin_url)))
+        next_date = extra_results.json()['data']['startDate']
 
-transaction_history = create_transaction_history(all_transactions)
+        for row in html.fragments_fromstring(extra_results.json()['data']['html']):
+            date = row.find('td/span[1]').text
+            date = datetime.datetime.strptime(date, '%A, %B %d, %Y')
+            price = float(row.findall('td')[1].text)
 
-print 'exit'
+            price_history.append((date, name, price))
+
+    return price_history
+
+
+if __name__ == '__main__':
+    my_session = requests.session()
+
+    result = my_session.get(login_url1)
+    vt = get_validation_token(result.content)
+
+    result = my_session.post(login_url1, {'hl_vt': vt, 'username': username, 'DoB': dob, 'submit.x': '50',
+                                          'submit.y': '20', 'submit': 'login'})
+
+    result = my_session.get(login_url2)
+    vt = get_validation_token(result.content)
+    parsed_html = html.fromstring(result.content)
+    required_chars = [int(x.text) - 1 for x in parsed_html.xpath('//*[@id="login-box-border"]/div/p/strong')]
+
+    result = my_session.post(login_url2, {'hl_vt': vt, 'pChar1': pwd[required_chars[0]],
+                                          'pChar2': pwd[required_chars[1]], 'pChar3': pwd[required_chars[2]],
+                                          'submit.x': '50', 'submit.y': '20', 'submit': 'login'})
+    result = my_session.get(account_summary_url)
+
+    holdings_data = get_list_of_holdings(result.content)
+    all_transactions = []
+    fund_isins = []
+    for name, url, isin_url in zip(holdings_data[0], holdings_data[1], holdings_data[2]):
+        history = get_transaction_history_for_url(my_session, name, url)
+        all_transactions.extend(history)
+
+        fund_isins.append((name, extract_isin_from_url(my_session, isin_url)))
+
+    transaction_history = create_transaction_history(all_transactions)
+
+    price_history = get_fund_price_history(my_session, name, fund_isins[-1][1], datetime.datetime(2016, 9, 1))
+
+    print 'exit'
