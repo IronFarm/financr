@@ -1,8 +1,10 @@
 import datetime
+from time import sleep
 
 import configparser
 import pandas as pd
 import requests
+from bokeh.charts import Line, output_file, show
 from lxml import html
 
 config = configparser.ConfigParser()
@@ -16,7 +18,7 @@ login_url1 = 'https://online.hl.co.uk/my-accounts/login-step-one'
 login_url2 = 'https://online.hl.co.uk/my-accounts/login-step-two'
 account_summary_url = 'https://online.hl.co.uk/my-accounts/account_summary/account/22'
 
-price_history_url_base = 'http://markets.ft.com/data/funds/tearsheet/historical?s='
+price_history_url = 'http://markets.ft.com/data/funds/tearsheet/historical'
 
 
 def get_validation_token(content):
@@ -51,7 +53,7 @@ def get_transaction_history_for_url(session, name, url):
 
 
 def extract_isin_from_url(session, url):
-    isin_path = './/*[@id="security-factsheet"]/div/div[7]/div[2]/div/div/table/tbody/tr[12]/td'
+    isin_path = './/*[@id="security-factsheet"]/div/div[7]/div[2]/div/div/table/tbody/tr[th="ISIN code:"]/td'
 
     result = session.get(url)
     parsed_html = html.fromstring(result.content)
@@ -63,26 +65,35 @@ def extract_isin_from_url(session, url):
 
 def create_transaction_history(transaction_data):
     transaction_history = pd.DataFrame.from_records(
-        transaction_data, exclude=['record'], columns=['fund', 'date', 'type', 'record', 'fund_price', 'units', 'value']
+        transaction_data, exclude=['record'], columns=['fund', 'date', 'type', 'record', 'fund_price', 'units', 'cost']
     )
-    transaction_history['date'] = pd.to_datetime(transaction_history['date'])
+    transaction_history['date'] = pd.to_datetime(transaction_history['date'], dayfirst=True)
     transaction_history['fund_price'] = transaction_history['fund_price'].apply(lambda x: float(x.replace(',', '')))
     transaction_history['units'] = transaction_history['units'].apply(lambda x: float(x.replace(',', '')))
-    transaction_history['value'] = transaction_history['value'].apply(lambda x: float(x.replace(',', '')))
-    transaction_history = transaction_history.set_index(['date', 'fund']).sort_index()
+    transaction_history['cost'] = transaction_history['cost'].apply(lambda x: float(x.replace(',', '')))
+    transaction_history = transaction_history.set_index(['date','fund']).sort_index()
 
     return transaction_history
 
 
-def get_fund_price_history(session, name, fund_isin, start_date):
+def get_fund_price_history(name, fund_isin, start_date):
+    print 'Downloading price history for {}'.format(name)
     row_xpath = ('.//*[@class="mod-ui-table mod-tearsheet-historical-prices__results mod-ui-table--freeze-pane"]'
                  '/tbody/tr')
     get_more_rows_xpath = './/*[@class="o-buttons mod-tearsheet-historical-prices__moreButton mod-ui-hide-small-below"]'
-    result = session.get(price_history_url_base + fund_isin)
+
+    result = requests.get(price_history_url, params={'s': fund_isin})
+    # TODO sometimes the result is not the expected page
+    if not result.url.count('tearsheet'):
+        sleep(10)
+        return get_fund_price_history(name, fund_isin, start_date)
+
     parsed_html = html.fromstring(result.content)
+    price_factor = 1.0 if result.url.count('GBX') else 100.0
 
     # Load initial data
     table_rows = parsed_html.findall(row_xpath)
+    # TODO sometimes this date is wrong
     next_date = parsed_html.find(get_more_rows_xpath).attrib['data-mod-results-startdate']
     symbol = parsed_html.find(get_more_rows_xpath).attrib['data-mod-symbol']
 
@@ -90,7 +101,7 @@ def get_fund_price_history(session, name, fund_isin, start_date):
     for row in table_rows:
         date = row.find('td/span[1]').text
         date = datetime.datetime.strptime(date, '%A, %B %d, %Y')
-        price = float(row.findall('td')[1].text)
+        price = float(row.findall('td')[1].text) * price_factor
 
         price_history.append((date, name, price))
 
@@ -101,10 +112,11 @@ def get_fund_price_history(session, name, fund_isin, start_date):
 
         next_date = extra_results.json()['data']['startDate']
 
+        # TODO this logic is identical to that above
         for row in html.fragments_fromstring(extra_results.json()['data']['html']):
             date = row.find('td/span[1]').text
             date = datetime.datetime.strptime(date, '%A, %B %d, %Y')
-            price = float(row.findall('td')[1].text)
+            price = float(row.findall('td')[1].text) * price_factor
 
             price_history.append((date, name, price))
 
@@ -140,7 +152,35 @@ if __name__ == '__main__':
         fund_isins.append((name, extract_isin_from_url(my_session, isin_url)))
 
     transaction_history = create_transaction_history(all_transactions)
+    total_holdings = transaction_history.groupby(level='fund')[['units', 'cost']].cumsum()
 
-    price_history = get_fund_price_history(my_session, name, fund_isins[-1][1], datetime.datetime(2016, 9, 1))
+    price_data = []
+    for name, isin in fund_isins:
+        start_date = total_holdings.loc(axis=0)[:, name].index.values[0][0]
+        price_data.extend(get_fund_price_history(name, isin, start_date))
+
+    price_history = pd.DataFrame.from_records(price_data, columns=['date', 'fund', 'fund_price'])
+    price_history['date'] = pd.to_datetime(price_history['date'], dayfirst=True)
+    price_history = price_history.set_index(['date', 'fund']).sort_index()
+
+    all_data = pd.concat([price_history, total_holdings], axis=1)
+    all_data = all_data.unstack('fund').fillna(method='ffill').stack()
+    all_data['value'] = all_data.eval('fund_price * units / 100')
+
+    value_history = all_data.groupby(level='date')[['cost', 'value']].sum().dropna()
+    value_history['ratio'] = value_history.eval('value / cost')
+    value_history['profit'] = value_history.eval('value - cost')
+
+    value_plot = Line(value_history, y='value', plot_width=1200, plot_height=600)
+    output_file("total_value.html")
+    show(value_plot)
+
+    ratio_plot = Line(value_history, y='ratio', plot_width=1200, plot_height=600)
+    output_file("ratio.html")
+    show(ratio_plot)
+
+    profit_plot = Line(value_history, y='profit', plot_width=1200, plot_height=600)
+    output_file("profit.html")
+    show(profit_plot)
 
     print 'exit'
