@@ -21,10 +21,11 @@ def get_fund_price_history(name, isin, start_date):
         correct_url = parsed_html.find('.//*[@id="wsod"]/ul/li[5]/a').attrib['onclick'].split('\'')[1]
         result = requests.get(correct_url)
 
-    symbol = result.url.split('=')[1]
-    price_factor = 1.0 if symbol[-3:] == 'GBX' else 100.0
+    currency_code = html.fromstring(result.content).find(".//*span[@class='mod-ui-data-list__label']").text[-4:-1]
+    price_factor = 1.0 if currency_code == 'GBX' else 100.0
 
     next_date = (datetime.date.today() - datetime.date(1900, 1, 1)).days + 3
+    symbol = result.url.split('=')[1]
     price_history = []
     while True:
         results = requests.get('http://markets.ft.com/data/equities/ajax/getmorehistoricalprices',
@@ -35,7 +36,7 @@ def get_fund_price_history(name, isin, start_date):
         for row in html.fragments_fromstring(results.json()['data']['html']):
             date = row.find('td/span[1]').text
             date = datetime.datetime.strptime(date, '%A, %B %d, %Y')
-            price = float(row.findall('td')[1].text) * price_factor
+            price = float(row.findall('td')[1].text) * price_factor  # Convert prices to pence
 
             price_history.append((date, name, price))
 
