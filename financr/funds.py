@@ -20,24 +20,30 @@ if __name__ == '__main__':
 
     price_history = prices.download_price_history(account_data, total_holdings)
 
-    all_data = pd.concat([price_history, total_holdings], axis=1)
-    all_data = all_data.unstack('fund').fillna(method='ffill').stack()
-    all_data['value'] = all_data.eval('fund_price * units / 100')
+    data_full_detail = pd.concat([price_history, total_holdings], axis=1)
+    data_full_detail = data_full_detail.unstack('fund').fillna(method='ffill').stack()
+    data_full_detail['value'] = data_full_detail.eval('fund_price * units / 100')
 
-    value_history = all_data.groupby(level='date')[['cost', 'value']].sum().dropna()
-    value_history['ratio'] = value_history.eval('value / cost')
-    value_history['profit'] = value_history.eval('value - cost')
+    data_by_date = data_full_detail.groupby(level='date')[['cost', 'value']].sum().dropna()
+    data_by_date['profit'] = data_by_date.eval('value - cost')
+    data_by_date['return'] = data_by_date['profit'] / data_by_date['cost'].max() * 100
 
-    value_plot = Line(value_history, y='value', plot_width=1200, plot_height=600)
-    output_file('total_value.html')
+    # TODO factor out plotting
+    # TODO plot by individual fund
+    value_plot = Line(data_by_date, y='cost', plot_width=1200, plot_height=600)
+    output_file('plots/total_cost.html')
     show(value_plot)
 
-    ratio_plot = Line(value_history, y='ratio', plot_width=1200, plot_height=600)
-    output_file('ratio.html')
-    show(ratio_plot)
+    value_plot = Line(data_by_date, y='value', plot_width=1200, plot_height=600)
+    output_file('plots/total_value.html')
+    show(value_plot)
 
-    profit_plot = Line(value_history, y='profit', plot_width=1200, plot_height=600)
-    output_file('profit.html')
+    profit_plot = Line(data_by_date, y='profit', plot_width=1200, plot_height=600)
+    output_file('plots/total_profit.html')
     show(profit_plot)
+
+    return_plot = Line(data_by_date, y='return', plot_width=1200, plot_height=600)
+    output_file('plots/total_return.html')
+    show(return_plot)
 
     print 'exit'
