@@ -1,8 +1,8 @@
 import configparser
 import pandas as pd
-from bokeh.charts import Line, output_file, show
 
 import hl
+import plot
 import prices
 
 config = configparser.ConfigParser()
@@ -28,22 +28,10 @@ if __name__ == '__main__':
     data_by_date['profit'] = data_by_date.eval('value - cost')
     data_by_date['return'] = data_by_date['profit'] / data_by_date['cost'].max() * 100
 
-    # TODO factor out plotting
     # TODO plot by individual fund
-    value_plot = Line(data_by_date, y='cost', plot_width=1200, plot_height=600)
-    output_file('plots/total_cost.html')
-    show(value_plot)
-
-    value_plot = Line(data_by_date, y='value', plot_width=1200, plot_height=600)
-    output_file('plots/total_value.html')
-    show(value_plot)
-
-    profit_plot = Line(data_by_date, y='profit', plot_width=1200, plot_height=600)
-    output_file('plots/total_profit.html')
-    show(profit_plot)
-
-    return_plot = Line(data_by_date, y='return', plot_width=1200, plot_height=600)
-    output_file('plots/total_return.html')
-    show(return_plot)
+    cost_plot = plot.plot_column(data_by_date, 'cost')
+    value_plot = plot.plot_column(data_by_date, 'value')
+    profit_plot = plot.plot_column(data_by_date, 'profit')
+    return_plot = plot.plot_column(data_by_date, 'return')
 
     print 'exit'
