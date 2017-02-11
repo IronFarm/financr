@@ -98,7 +98,7 @@ def create_transaction_history(account_data):
     transactions = []
     for holding in account_data:
         for transaction in holding['transaction_history']:
-            transactions.append((holding['name'], ) + transaction)
+            transactions.append((holding['name'],) + transaction)
 
     transaction_history = pd.DataFrame.from_records(
         transactions, exclude=['record'], columns=['fund', 'date', 'type', 'record', 'fund_price', 'units', 'cost']
@@ -107,7 +107,6 @@ def create_transaction_history(account_data):
     transaction_history['fund_price'] = transaction_history['fund_price'].apply(lambda x: float(x.replace(',', '')))
     transaction_history['units'] = transaction_history['units'].apply(lambda x: float(x.replace(',', '')))
     transaction_history['cost'] = transaction_history['cost'].apply(lambda x: float(x.replace(',', '')))
-    transaction_history = transaction_history.set_index(['date','fund']).sort_index()
+    transaction_history = transaction_history.set_index(['date', 'fund']).sort_index()
 
     return transaction_history
-
