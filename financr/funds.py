@@ -22,7 +22,10 @@ if __name__ == '__main__':
 
     data_full_detail = pd.concat([price_history, total_holdings], axis=1)
     data_full_detail = data_full_detail.unstack('fund').fillna(method='ffill').stack()
+    data_full_detail = data_full_detail.dropna()
     data_full_detail['value'] = data_full_detail.eval('fund_price * units / 100')
+
+    # data_full_detail.to_csv('data.csv')
 
     data_by_date = data_full_detail.groupby(level='date')[['cost', 'value']].sum().dropna()
     data_by_date['profit'] = data_by_date.eval('value - cost')

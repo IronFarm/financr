@@ -1,4 +1,5 @@
 import datetime
+import json
 
 import pandas as pd
 import requests
@@ -8,7 +9,7 @@ PRICE_HISTORY_URL = 'http://markets.ft.com/data/funds/tearsheet/historical'
 FALLBACK_URL = 'http://funds.ft.com/uk/Tearsheet/Summary'
 
 
-def get_fund_price_history(name, isin, start_date):
+def get_fund_price_history(name, isin, min_date):
     print 'Downloading price history for {}'.format(name)
 
     # Load FT page to get symbol and currency
@@ -16,6 +17,7 @@ def get_fund_price_history(name, isin, start_date):
 
     # TODO sometimes the result is not the expected page
     if not result.url.count('tearsheet'):
+        print 'First attempt at price download failed, using fallback URL'
         result = requests.get(FALLBACK_URL, params={'s': isin})
         parsed_html = html.fromstring(result.content)
         correct_url = parsed_html.find('.//*[@id="wsod"]/ul/li[5]/a').attrib['onclick'].split('\'')[1]
@@ -24,24 +26,28 @@ def get_fund_price_history(name, isin, start_date):
     currency_code = html.fromstring(result.content).find(".//*span[@class='mod-ui-data-list__label']").text[-4:-1]
     price_factor = 1.0 if currency_code == 'GBX' else 100.0
 
-    next_date = (datetime.date.today() - datetime.date(1900, 1, 1)).days + 3
-    symbol = result.url.split('=')[1]
+    end_date = datetime.date.today()
+    symbol = json.loads(
+        html.fromstring(result.content).find(".//*section[@class='mod-tearsheet-add-to-watchlist']").attrib['data-mod-config']
+    )['xid']
     price_history = []
     while True:
-        results = requests.get('http://markets.ft.com/data/equities/ajax/getmorehistoricalprices',
-                               params={'resultsStartDate': next_date, 'symbol': symbol, 'isLastRowStriped': 'false'})
+        start_date = end_date - datetime.timedelta(days=364)
+        results = requests.get('https://markets.ft.com/data/equities/ajax/get-historical-prices',
+                               params={'startDate': start_date, 'endDate': end_date, 'symbol': symbol})
 
-        next_date = results.json()['data']['startDate']
-
-        for row in html.fragments_fromstring(results.json()['data']['html']):
+        for row in html.fragments_fromstring(results.json()['html']):
             date = row.find('td/span[1]').text
             date = datetime.datetime.strptime(date, '%A, %B %d, %Y')
             price = float(row.findall('td')[1].text) * price_factor  # Convert prices to pence
 
             price_history.append((date, name, price))
 
-        if price_history[-1][0] <= start_date:
+        if start_date < min_date:
             break
+
+        # TODO test this
+        end_date = start_date - datetime.timedelta(days=1)
 
     return price_history
 
@@ -49,7 +55,7 @@ def get_fund_price_history(name, isin, start_date):
 def download_price_history(account_data, total_holdings):
     price_data = []
     for holding in account_data:
-        start_date = total_holdings.loc(axis=0)[:, holding['name']].index.values[0][0]
+        start_date = total_holdings.loc(axis=0)[:, holding['name']].index.values[0][0].date()
         price_data.extend(get_fund_price_history(holding['name'], holding['isin'], start_date))
 
     price_history = pd.DataFrame.from_records(price_data, columns=['date', 'fund', 'fund_price'])
