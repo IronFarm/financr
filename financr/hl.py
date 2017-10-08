@@ -39,7 +39,8 @@ def get_list_of_holdings(session):
             'name': row.find('td/div/a/span').text,
             'transaction_url': row.find('td[1]/a').attrib['href'],
             'detail_url': row.find('.//*[@class="factsheet-button"]').attrib['href'].replace('security_details',
-                                                                                             'fund_key_features')
+                                                                                             'fund_key_features'),
+            'total_units': float(row.find('td[3]/span').text.replace(',', ''))
         }
         holdings.append(holding)
 
@@ -52,7 +53,11 @@ def download_transaction_history(session, name, url):
     transaction_rows = './/*[@id="movements-table-container"]/table/tbody/tr'
     transaction_history = []
 
-    result = session.get(url)
+    try:
+        result = session.get(url)
+    except requests.ConnectionError:
+        print 'Error fetching transaction history for {}'.format(name)
+        return transaction_history
     parsed_html = html.fromstring(result.content)
 
     for row in parsed_html.findall(transaction_rows):
@@ -77,7 +82,8 @@ def get_account_data_for_holdings(my_session, holdings):
             'name': holding['name'],
             'transaction_history': download_transaction_history(my_session, holding['name'],
                                                                 holding['transaction_url']),
-            'isin': get_isin_from_url(my_session, holding['detail_url'])
+            'isin': get_isin_from_url(my_session, holding['detail_url']),
+            'total_units': holding['total_units']
         }
         account_data.append(account)
 
