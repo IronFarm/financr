@@ -113,6 +113,14 @@ def create_transaction_history(account_data):
     transaction_history['fund_price'] = transaction_history['fund_price'].apply(lambda x: float(x.replace(',', '')))
     transaction_history['units'] = transaction_history['units'].apply(lambda x: float(x.replace(',', '')))
     transaction_history['cost'] = transaction_history['cost'].apply(lambda x: float(x.replace(',', '')))
+
+    try:
+        archived_transactions = pd.read_csv('archived_transactions.csv', parse_dates=[0])
+        transaction_history = pd.concat([transaction_history, archived_transactions])
+    except IOError:
+        pass
+
+    transaction_history = transaction_history.query('not (units > 0.0 and fund_price == 0.0)')
     transaction_history = transaction_history.set_index(['date', 'fund']).sort_index()
 
     return transaction_history

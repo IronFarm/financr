@@ -25,12 +25,11 @@ def load_price_history():
 
     return price_history_
 
+
 if __name__ == '__main__':
     account_data = hl.download_account_data(username, dob, password)
     transaction_history = hl.create_transaction_history(account_data)
     total_holdings = transaction_history.groupby(level='fund')[['units', 'cost']].cumsum()
-
-    # transaction_history['age'] = [datetime.date.today() - d for d in transaction_history.index.get_level_values('date').date]
 
     saved_price_history = load_price_history()
     price_history = prices.update_price_history(account_data, total_holdings, saved_price_history)
@@ -43,8 +42,6 @@ if __name__ == '__main__':
 
     transaction_history.to_csv('transactions.csv')
     data_full_detail.to_csv('data.csv')
-
-    data_full_detail = data_full_detail[['Fidelity' not in name for name in data_full_detail.index.get_level_values(1)]]
 
     data_by_date = data_full_detail.groupby(level='date')[['cost', 'value']].sum().dropna()
     data_by_date['profit'] = data_by_date.eval('value - cost')
